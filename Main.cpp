@@ -1,57 +1,103 @@
+// https://zenn.dev/reputeless/books/siv3d-documentation/viewer/quick-example
+
 # include <Siv3D.hpp>
 
 void Main()
 {
-    // Set background color to sky blue
-    Scene::SetBackground(ColorF{ 0.8, 0.9, 1.0 });
+	// ウィンドウを 1280x720 にリサイズ
+	Window::Resize(1280, 720);
 
-    // Create a new font
-    const Font font{ 60 };
-    
-    // Create a new emoji font
-    const Font emojiFont{ 60, Typeface::ColorEmoji };
-    
-    // Set emojiFont as a fallback
-    font.addFallback(emojiFont);
+	// 背景色を設定
+	Scene::SetBackground(ColorF{ 0.2 });
 
-    // Create a texture from an image file
-    const Texture texture{ U"example/windmill.png" };
+	// 2D 物理演算のシミュレーションステップ（秒）
+	constexpr double stepSec = (1.0 / 200.0);
 
-    // Create a texture from an emoji
-    const Texture emoji{ U"🐈"_emoji };
+	// 2D 物理演算のシミュレーション蓄積時間（秒）
+	double accumulatorSec = 0.0;
 
-    // Coordinates of the emoji
-    Vec2 emojiPos{ 300, 150 };
+	// 2D 物理演算のワールド
+	P2World world;
 
-    // Print a text
-    Print << U"Push [A] key";
+	const P2Body rail = world.createLineString(P2Static, Vec2{ 0, -400 }, { Vec2{-400, -40}, Vec2{-400, 0}, Vec2{400, 0}, {Vec2{400, -40}} });
+	const P2Body wheel = world.createCircle(P2Dynamic, Vec2{ 0, -420 }, 20);
+	const P2Body car = world.createCircle(P2Dynamic, Vec2{ 0, -380 }, 10).setFixedRotation(true);
 
-    while (System::Update())
-    {   
-        // Draw a texture
-        texture.draw(200, 200);
+	// ホイールジョイント
+	const P2WheelJoint wheelJoint = world.createWheelJoint(car, wheel, wheel.getPos(), Vec2{ 0, 1 })
+		.setLimitsEnabled(true);
 
-        // Put a text in the middle of the screen
-        font(U"Hello, Siv3D!🚀").drawAt(Scene::Center(), Palette::Black);
+	const P2Body box = world.createPolygon(P2Dynamic, Vec2{ 0, 0 }, LineString{ Vec2{-100, 0}, Vec2{-100, 100}, Vec2{100, 100}, {Vec2{100, 0}} }.calculateBuffer(5), P2Material{ .friction = 0.0 });
 
-        // Draw a texture with animated size
-        emoji.resized(100 + Periodic::Sine0_1(1s) * 20).drawAt(emojiPos);
+	// 距離ジョイント
+	const P2DistanceJoint distanceJointL = world.createDistanceJoint(car, car.getPos(), box, Vec2{ -100, 0 }, 400);
+	const P2DistanceJoint distanceJointR = world.createDistanceJoint(car, car.getPos(), box, Vec2{ 100, 0 }, 400);
 
-        // Draw a red transparent circle that follows the mouse cursor
-        Circle{ Cursor::Pos(), 40 }.draw(ColorF{ 1, 0, 0, 0.5 });
+	Array<P2Body> balls;
 
-        // When [A] key is down
-        if (KeyA.down())
-        {
-            // Print a randomly selected text
-            Print << Sample({ U"Hello!", U"こんにちは", U"你好", U"안녕하세요?" });
-        }
+	// マウスジョイント
+	P2MouseJoint mouseJoint;
 
-        // When [Button] is pushed
-        if (SimpleGUI::Button(U"Button", Vec2{ 640, 40 }))
-        {
-            // Move the coordinates to a random position in the screen
-            emojiPos = RandomVec2(Scene::Rect());
-        }
-    }
+	// 2D カメラ
+	Camera2D camera{ Vec2{ 0, -150 } };
+
+	Print << U"[Space]: 粒子を放出";
+
+	while (System::Update())
+	{
+		for (accumulatorSec += Scene::DeltaTime(); stepSec <= accumulatorSec; accumulatorSec -= stepSec)
+		{
+			world.update(stepSec);
+		}
+
+		// こぼれたボールの削除
+		balls.remove_if([](const P2Body& b) { return (600 < b.getPos().y); });
+
+		// 2D カメラの更新
+		camera.update();
+		{
+			// 2D カメラから Transformer2D を作成
+			const auto t = camera.createTransformer();
+
+			// マウスジョイントによる干渉
+			if (MouseL.down())
+			{
+				mouseJoint = world.createMouseJoint(box, Cursor::PosF())
+					.setMaxForce(box.getMass() * 5000.0)
+					.setLinearStiffness(2.0, 0.7);
+			}
+			else if (MouseL.pressed())
+			{
+				mouseJoint.setTargetPos(Cursor::PosF());
+			}
+			else if (MouseL.up())
+			{
+				mouseJoint.release();
+			}
+
+			if (KeySpace.pressed())
+			{
+				// ボールの追加
+				balls << world.createCircle(P2Dynamic, Cursor::PosF(), Random(2.0, 4.0), P2Material{ .density = 0.001, .restitution = 0.5, .friction = 0.0 });
+			}
+
+			rail.draw(Palette::Gray);
+			wheel.draw(Palette::Gray).drawWireframe(1, Palette::Yellow);
+			car.draw(ColorF{ 0.3, 0.8, 0.5 });
+			box.draw(ColorF{ 0.3, 0.8, 0.5 });
+
+			for (const auto& ball : balls)
+			{
+				ball.draw(Palette::Skyblue);
+			}
+
+			distanceJointL.draw();
+			distanceJointR.draw();
+
+			mouseJoint.draw();
+		}
+
+		// 2D カメラの操作を描画
+		camera.draw(Palette::Orange);
+	}
 }
